@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "com.joxos.cloudphone",
+    "vendor": "Tecon",
+    "versionCode": 1000004,
+    "versionName": "1.0.4",
+    "icon": "$media:layered_image",
+    "label": "$string:app_name"
+  }
+}

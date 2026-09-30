@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "云机伴侣客户端主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "云机伴侣客户端入口"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "云机伴侣"
+    },
+    {
+      "name": "permission_internet_reason",
+      "value": "需要访问网络连接被控端"
+    },
+    {
+      "name": "permission_camera_reason",
+      "value": "摄像头回传需要采集本机摄像头画面"
+    }
+  ]
+}

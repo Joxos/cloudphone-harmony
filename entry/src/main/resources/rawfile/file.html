@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<title>文件中心</title>
+<!--
+  file.html —— 文件中心视图层（P2-1a，ArkWeb 路线 A 第三承载页）
+  职责（单一）：目录浏览/下载/删除/建目录的 UI 与事件装配；协议在 js/fileproto.js，
+    引导（数据通道专用连接）在 js/fileboot.js；保存经原生桥 saveFile（系统选择器写盘）。
+  上传与 APK 安装（upload_start 分块流控 / install_apk）属 P2-1b 批次。
+  协议为 file-channel；上游基准 FileManagerPage.vue。
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #F5F5F5; font-family: sans-serif; }
+  #fb-status { position: sticky; top: 0; padding: 10px 14px; background: #1C1C1C; color: #7FE07F;
+               font-size: 13px; z-index: 5; }
+  #fb-status.err { color: #FF8A8A; }
+  #fb-toolbar { display: flex; gap: 8px; padding: 10px 12px; align-items: center; }
+  #fb-path { flex: 1; font-size: 13px; color: #333; overflow: hidden; text-overflow: ellipsis;
+             white-space: nowrap; direction: rtl; text-align: left; }
+  .fb-btn { padding: 7px 12px; font-size: 12px; border: none; border-radius: 6px;
+            background: #0A59F7; color: #fff; }
+  .fb-btn.ghost { background: #EEEEEE; color: #666666; }
+  #fb-mkdir { display: flex; gap: 8px; padding: 0 12px 10px; }
+  #fb-mkdir input { flex: 1; padding: 8px 10px; font-size: 13px; border: 1px solid #DDDDDD;
+                    border-radius: 6px; background: #fff; }
+  #fb-list { padding: 0 10px 30px; }
+  .fb-row { display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 8px;
+            padding: 11px 12px; margin-bottom: 6px; }
+  .fb-name { flex: 1; font-size: 13px; color: #333; overflow: hidden; text-overflow: ellipsis;
+             white-space: nowrap; }
+  .fb-name.dir { color: #0A59F7; font-weight: 500; }
+  .fb-size { font-size: 11px; color: #999999; }
+  .fb-act { padding: 5px 9px; font-size: 11px; border: none; border-radius: 5px;
+            background: #EEF4FF; color: #0A59F7; }
+  .fb-act.danger { background: #FDEEEE; color: #CC0000; }
+  #fb-empty { text-align: center; color: #999999; font-size: 13px; padding: 40px 0; }
+</style>
+</head>
+<body>
+<div id="fb-status">初始化…</div>
+<div id="fb-toolbar">
+  <button class="fb-btn ghost" id="fb-up">上级</button>
+  <div id="fb-path">/sdcard</div>
+  <button class="fb-btn ghost" id="fb-refresh">刷新</button>
+</div>
+<div id="fb-mkdir">
+  <input id="fb-mkdir-input" placeholder="新目录名（在当前路径下创建）">
+  <button class="fb-btn" id="fb-mkdir-btn">创建目录</button>
+  <button class="fb-btn" id="fb-upload-btn">上传文件</button>
+  <input type="file" id="fb-file-input" style="display:none">
+</div>
+<div id="fb-list"><div id="fb-empty">加载中…</div></div>
+
+<!-- 哈希 → 协议 → 引导 → 装配（一文件一职责：各自分文件，本文件仅视图与装配） -->
+<script src="js/sha256.js"></script>
+<script src="js/fileproto.js"></script>
+<script src="js/fileboot.js"></script>
+<script>
+'use strict';
+(function () {
+  var currentPath = '/sdcard';
+  var pathEl = document.getElementById('fb-path');
+  var listEl = document.getElementById('fb-list');
+  var statusEl = document.getElementById('fb-status');
+
+  function setStatus(text, ok) {
+    statusEl.textContent = text;
+    statusEl.className = ok ? '' : 'err';
+  }
+
+  function fmtSize(n) {
+    if (n === undefined || n === null) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  }
+
+  function joinPath(base, name) {
+    if (base === '/') return '/' + name;
+    return base.replace(/\/+$/, '') + '/' + name;
+  }
+
+  function renderList(msg) {
+    if (msg.path) {
+      currentPath = msg.path;
+      pathEl.textContent = currentPath;
+    }
+    var files = msg.files || [];
+    listEl.innerHTML = '';
+    if (files.length === 0) {
+      listEl.innerHTML = '<div id="fb-empty">空目录</div>';
+      return;
+    }
+    for (var i = 0; i < files.length; i++) {
+      (function (f) {
+        var row = document.createElement('div');
+        row.className = 'fb-row';
+        var name = document.createElement('div');
+        name.className = 'fb-name' + (f.is_dir ? ' dir' : '');
+        name.textContent = (f.is_dir ? '📁 ' : '📄 ') + (f.name || f.path);
+        row.appendChild(name);
+        if (!f.is_dir) {
+          var size = document.createElement('div');
+          size.className = 'fb-size';
+          size.textContent = fmtSize(f.size);
+          row.appendChild(size);
+        }
+        if (f.is_dir) {
+          // 目录：点行进入
+          row.addEventListener('click', function () {
+            gotoPath(f.path);
+          });
+        } else {
+          var btnDl = document.createElement('button');
+          btnDl.className = 'fb-act';
+          btnDl.textContent = '下载';
+          btnDl.addEventListener('click', function () {
+            if (!window.__fpApi.downloadStart(f.path)) {
+              setStatus('下载未发出：通道忙或未就绪', false);
+            } else {
+              setStatus('下载中 ' + (f.name || '') + '…', true);
+            }
+          });
+          row.appendChild(btnDl);
+          // P2-1b：APK 行内安装（install_apk → install_status 三态）
+          if (/\.apk$/i.test(f.name || f.path)) {
+            var btnInst = document.createElement('button');
+            btnInst.className = 'fb-act';
+            btnInst.textContent = '安装';
+            btnInst.addEventListener('click', function () {
+              if (window.__fpApi.installApk(f.path)) {
+                setStatus('安装中 ' + (f.name || '') + '…', true);
+              } else {
+                setStatus('安装未发出：通道忙或未就绪', false);
+              }
+            });
+            row.appendChild(btnInst);
+          }
+          var btnDel = document.createElement('button');
+          btnDel.className = 'fb-act danger';
+          btnDel.textContent = '删除';
+          btnDel.addEventListener('click', function () {
+            if (window.confirm('确定删除 ' + (f.name || f.path) + ' ?')) {
+              window.__fpApi.del(f.path);
+            }
+          });
+          row.appendChild(btnDel);
+        }
+        listEl.appendChild(row);
+      })(files[i]);
+    }
+  }
+
+  function gotoPath(p) {
+    pathEl.textContent = p + ' …';
+    if (!window.__fpApi.list(p)) {
+      setStatus('列表未发出：通道未就绪', false);
+    }
+  }
+
+  // ---- 事件装配 ----
+  window.__fp.onState = function (ready) {
+    if (ready) {
+      setStatus('文件通道就绪', true);
+      gotoPath(currentPath);
+    } else {
+      setStatus('文件通道断开（重连中）', false);
+    }
+  };
+  window.__fp.onList = function (msg) {
+    if (msg.success === false) return;
+    renderList(msg);
+  };
+  window.__fp.onOp = function (type, success, error) {
+    if (success) {
+      setStatus(type === 'mkdir_reply' ? '目录已创建' : '已删除', true);
+      gotoPath(currentPath);
+    } else {
+      setStatus('操作失败: ' + error, false);
+    }
+  };
+  window.__fp.onDownloadProgress = function (path, loaded, total) {
+    var pct = total > 0 ? Math.floor(loaded * 100 / total) + '%' : loaded + ' B';
+    setStatus('下载 ' + path.split('/').pop() + ' · ' + pct, true);
+  };
+  window.__fp.onDownloadDone = function (path, bytes) {
+    setStatus('下载完成，选择保存位置…', true);
+    // bytes → base64（分段拼接防栈溢出）
+    var bin = '';
+    var chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    var name = path.split('/').pop() || 'download.bin';
+    if (window.nativeBridge && typeof window.nativeBridge.saveFile === 'function') {
+      window.nativeBridge.saveFile(btoa(bin), name);
+    }
+  };
+  window.__fp.onError = function (msg) {
+    setStatus(msg, false);
+  };
+  // ---- P2-1b：上传与安装事件 ----
+  window.__fp.onUploadProgress = function (path, loaded, total) {
+    var pct = total > 0 ? Math.floor(loaded * 100 / total) + '%' : loaded + ' B';
+    setStatus('上传 ' + path.split('/').pop() + ' · ' + pct, true);
+  };
+  window.__fp.onUploadDone = function (path, willInstall) {
+    setStatus(willInstall ? '上传完成，开始安装…' : '上传完成', true);
+    gotoPath(currentPath);
+  };
+  window.__fp.onUploadFail = function (path, reason) {
+    setStatus('上传失败: ' + reason, false);
+  };
+  window.__fp.onInstall = function (status, message, path) {
+    if (status === 'success') {
+      setStatus('安装成功: ' + path.split('/').pop(), true);
+      gotoPath(currentPath);
+    } else if (status === 'error') {
+      setStatus('安装失败: ' + message, false);
+    } else {
+      setStatus('安装中 ' + path.split('/').pop() + '…', true);
+    }
+  };
+
+  // ---- 工具栏装配 ----
+  document.getElementById('fb-up').addEventListener('click', function () {
+    if (currentPath === '/' || currentPath.length === 0) return;
+    var idx = currentPath.replace(/\/+$/, '').lastIndexOf('/');
+    gotoPath(idx <= 0 ? '/' : currentPath.substring(0, idx));
+  });
+  document.getElementById('fb-refresh').addEventListener('click', function () {
+    gotoPath(currentPath);
+  });
+  document.getElementById('fb-mkdir-btn').addEventListener('click', function () {
+    var input = document.getElementById('fb-mkdir-input');
+    var name = (input.value || '').trim();
+    if (!name) {
+      setStatus('请输入目录名', false);
+      return;
+    }
+    if (window.__fpApi.mkdir(joinPath(currentPath, name))) {
+      input.value = '';
+    } else {
+      setStatus('建目录未发出：通道未就绪', false);
+    }
+  });
+
+  // ---- P2-1b：上传（选文件 → 就绪/APK确认 → sha256 → upload_start） ----
+  var fileInput = document.getElementById('fb-file-input');
+  document.getElementById('fb-upload-btn').addEventListener('click', function () {
+    if (!window.__fpApi.ready()) {
+      setStatus('文件通道未就绪，无法上传', false);
+      return;
+    }
+    fileInput.click();
+  });
+  fileInput.addEventListener('change', function () {
+    var file = fileInput.files && fileInput.files[0];
+    fileInput.value = '';
+    if (!file) return;
+    var installOnFinish = false;
+    if (/\.apk$/i.test(file.name)) {
+      installOnFinish = window.confirm('上传完成后安装 "' + file.name + '"？');
+    }
+    var dest = joinPath(currentPath, file.name);
+    setStatus('计算校验值…', true);
+    window.__fpApi.uploadStart(file, dest, installOnFinish).then(function (ok) {
+      if (!ok) {
+        setStatus('上传未发出：通道忙或未就绪', false);
+      }
+    });
+  });
+
+  // ---- 启动 ----
+  fbStart();
+})();
+</script>
+</body>
+</html>

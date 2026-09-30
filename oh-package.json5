@@ -1,0 +1,13 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "cloudphone_harmony",
+  "version": "1.0.0",
+  "description": "云手机客户端（ScrcpyOverWebRTC 协议的 HarmonyOS 官方适配）",
+  "main": "",
+  "author": "Tecon",
+  "license": "Apache-2.0",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.19"
+  }
+}

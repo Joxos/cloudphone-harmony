@@ -1,0 +1,38 @@
+// ============================================================================
+// 签名配置模板（template）
+//
+// 本仓库**不携带任何签名材料**，build-profile.json5 里已清空 signingConfigs，
+// 使任何人 clone 后都能直接 assembleHap 出未签名包。
+//
+// 要出可安装到真机的**已签名**包：把下面 "signingConfigs" 整块贴进
+// build-profile.json5 的 "app": { } 内，并给 "products"[0] 加回
+//     "signingConfig": "default"
+// 然后把签名材料放到 CloudPhoneHarmony/signing/（该目录已在 .gitignore 中）：
+//
+//   cloudphone.cer     证书
+//   cloudphone.p7b     描述文件（profile）
+//   release_ec.p12     密钥库（.p12）
+//
+// 口令字段说明：HarmonyOS 工具链的 storePassword / keyPassword 是**加密态**字符串
+//   （由 .p12 派生，非 p12 的明文口令）。用 DevEco Studio 自动签名最省事——
+//   File → Project Structure → Signing Configs 勾选 Automatically generate signature。
+//
+// 留空字符串会报 "The length of the storePassword or keyPassword field in the
+//   signature configuration is less than 32."（hvigor 00303116），所以必须填真值
+//   或整块删除该配置。
+// ============================================================================
+"signingConfigs": [
+  {
+    "name": "default",
+    "type": "HarmonyOS",
+    "material": {
+      "certpath": "./signing/cloudphone.cer",
+      "storePassword": "<你的加密态 storePassword>",
+      "keyAlias": "release",
+      "keyPassword": "<你的加密态 keyPassword>",
+      "profile": "./signing/cloudphone.p7b",
+      "signAlg": "SHA256withECDSA",
+      "storeFile": "./signing/release_ec.p12"
+    }
+  }
+]

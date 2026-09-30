@@ -1,0 +1,44 @@
+{
+  // ⚠ 仓库不携带任何签名材料：本文件已按 hvigor 建议清空 signingConfigs，
+  //    使任何人 clone 后都能直接 assembleHap 得到**未签名**包（无法上真机/应用市场）。
+  //    要出已签名包：在 DevEco Studio 的 Project Structure → Signing Configs 填入
+  //    自己的 .cer/.p7b/.p12，或把 signing/build-profile.signing.snippet.json5
+  //    的片段贴回下方 "app" 内并给 products[] 加回 "signingConfig": "default"。
+  "app": {
+    "products": [
+      {
+        "name": "default",
+        "compatibleSdkVersion": "5.0.0(12)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true
+          }
+        },
+        "targetSdkVersion": "6.1.1(24)"
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

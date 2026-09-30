@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<title>云手机控制</title>
+<!--
+  control.html —— 云手机遥控页视图层（ArkWeb 路线 A 载体）
+  职责（单一）：DOM 与样式 + 按依赖序加载 JS 引擎模块 + 启动信令。
+  逻辑全部在 js/ 目录（一文件一职责，加载顺序即依赖序）：
+    session → state → stats → clipboard → audio → camera → peer → keymap → input → ai → screenshot → mockscreen → ansiterm → adbproto → signaling → boot
+  
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #000; overflow: hidden; touch-action: none; }
+  #video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #status { position: absolute; left: 12px; top: 12px; padding: 4px 10px; background: rgba(0,0,0,0.55);
+            color: #7FE07F; font: 13px/1.5 sans-serif; border-radius: 6px; z-index: 10; max-width: 70%;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status.err { color: #FF8A8A; }
+  #hint { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+          color: #999999; font: 15px sans-serif; z-index: 5; }
+  /* IME 隐藏输入框（软键盘/输入法经此进 inject_text；双击画面聚焦） */
+  #ime { position: fixed; left: -2px; bottom: 0; width: 1px; height: 40px; opacity: 0.01;
+         border: none; background: transparent; z-index: 20; }
+  /* Demo 仿真屏（居中等比；内部分辨率由 JS 设定） */
+  #mock-screen { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  /* P2-2 ADB 终端面板（全屏覆盖：状态条 + 网格终端 + 隐藏 IME） */
+  #adb-panel { position: absolute; inset: 0; background: #0d1117; display: none; flex-direction: column;
+               z-index: 30; }
+  #adb-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+             background: #161b22; color: #c9d1d9; font: 12px sans-serif; }
+  #adb-status { color: #23d18b; }
+  #adb-size { color: #666666; }
+  #adb-close { margin-left: auto; padding: 5px 14px; border: none; border-radius: 5px;
+               background: #da3633; color: #fff; font-size: 12px; }
+  #adb-term-wrap { flex: 1; overflow: hidden; padding: 4px; }
+  #adb-canvas { image-rendering: pixelated; }
+  #adb-input { position: absolute; left: -4px; bottom: 0; width: 1px; height: 40px; opacity: 0.01;
+               border: none; background: transparent; }
+  /* P2-3 AI 助手面板（全屏覆盖：状态/技能/消息流/输入） */
+  #ai-panel { position: absolute; inset: 0; background: #0f172a; display: none; flex-direction: column;
+              z-index: 40; }
+  #ai-bar { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: #1e293b;
+            color: #cbd5e1; font: 12px sans-serif; }
+  #ai-trace { flex: 1; color: #38bdf8; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #ai-bar button { padding: 5px 12px; border: none; border-radius: 5px; font-size: 12px; }
+  #ai-new { background: #334155; color: #e2e8f0; }
+  #ai-close { background: #da3633; color: #fff; }
+  #ai-skills { display: flex; gap: 6px; padding: 8px 10px; overflow-x: auto; flex-shrink: 0; }
+  .ai-skill { white-space: nowrap; padding: 6px 10px; border: none; border-radius: 14px;
+              background: #1e293b; color: #7dd3fc; font-size: 11px; }
+  #ai-msgs { flex: 1; overflow-y: auto; padding: 10px 12px; }
+  .ai-msg { margin-bottom: 8px; padding: 8px 10px; border-radius: 8px; font: 13px/1.55 sans-serif;
+            white-space: pre-wrap; word-break: break-word; }
+  .ai-msg.user { background: #1d4ed8; color: #e0f2fe; }
+  .ai-msg.assistant { background: #1e293b; color: #e2e8f0; }
+  .ai-msg.tool { background: #0b1220; color: #94a3b8; font-size: 12px; }
+  .ai-msg.err { background: #7f1d1d; color: #fecaca; }
+  #ai-input-row { display: flex; gap: 8px; padding: 9px 10px; background: #1e293b; }
+  #ai-input { flex: 1; padding: 9px 11px; font-size: 13px; border: none; border-radius: 7px;
+              background: #0f172a; color: #e2e8f0; }
+  #ai-send { padding: 0 18px; border: none; border-radius: 7px; background: #0a59f7; color: #fff;
+             font-size: 13px; }
+</style>
+</head>
+<body>
+<video id="video" autoplay playsinline muted></video>
+<!-- P2-12d：Demo 仿真屏（boot 检测 demoMode 时显示，替代 video） -->
+<canvas id="mock-screen" style="display:none"></canvas>
+<textarea id="ime" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+<div id="hint">正在连接被控端...</div>
+<div id="status">初始化</div>
+
+<!-- P2-2：WebADB 终端面板（网格终端 + 隐藏 IME；open/close 由 FAB 经 __adbApi 调用） -->
+<div id="adb-panel">
+  <div id="adb-bar">
+    <span id="adb-status">未连接</span>
+    <span id="adb-size"></span>
+    <button id="adb-close" onclick="__adbApi.close()">关闭</button>
+  </div>
+  <div id="adb-term-wrap"><canvas id="adb-canvas"></canvas></div>
+  <textarea id="adb-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+</div>
+
+<!-- P2-3：AI 助手面板（消息流/技能模板/输入；引擎在 js/ai.js） -->
+<div id="ai-panel">
+  <div id="ai-bar">
+    <span id="ai-trace">就绪</span>
+    <button id="ai-new">新会话</button>
+    <button id="ai-close">关闭</button>
+  </div>
+  <div id="ai-skills"></div>
+  <div id="ai-msgs"></div>
+  <div id="ai-input-row">
+    <input id="ai-input" placeholder="描述问题，如：网络卡顿帮我查一下">
+    <button id="ai-send">发送</button>
+  </div>
+</div>
+
+<!-- 引擎模块：经典脚本共享全局作用域（规避 resource:// 下 ES module 的加载不确定性） -->
+<script src="js/session.js"></script>
+<script src="js/state.js"></script>
+<script src="js/stats.js"></script>
+<script src="js/clipboard.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/camera.js"></script>
+<script src="js/peer.js"></script>
+<script src="js/keymap.js"></script>
+<script src="js/input.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/screenshot.js"></script>
+<script src="js/mockscreen.js"></script>
+<script src="js/ansiterm.js"></script>
+<script src="js/adbproto.js"></script>
+<script src="js/signaling.js"></script>
+<!-- P2-2：ADB 面板输入装配（键盘绑定在隐藏 IME 上——面板打开即聚焦，避免与 input.js
+     抢占 window 级监听；测试桩单槽语义下也互不干扰） -->
+<script>
+(function () {
+  var input = document.getElementById('adb-input');
+  input.addEventListener('keydown', function (e) {
+    if (!window.__adbApi.state().open || e.isComposing) return;
+    if (window.__adbApi.sendKey(e)) { e.preventDefault(); }
+  });
+  input.addEventListener('compositionend', function () {
+    var v = input.value; input.value = ''; window.__adbApi.sendText(v);
+  });
+  input.addEventListener('input', function (ev) {
+    if (ev.isComposing || ev.inputType === 'insertCompositionText') return;
+    var v = input.value; input.value = ''; window.__adbApi.sendText(v);
+  });
+  document.getElementById('adb-term-wrap').addEventListener('click', function () { input.focus(); });
+})();
+</script>
+
+<!-- P2-3：AI 面板装配（消息渲染/技能模板/发送与加载态；引擎与循环在 js/ai.js） -->
+<script>
+(function () {
+  // 5 个预设技能（上游 defaultSkills 原文移植；点击即作为用户消息发送）
+  var SKILLS = [
+    ['📊 虚机健康检查', '请对这台设备做一次全面的健康自检，检查系统负载(uptime/top)、可用内存(free)及存储空间(df -h /data)。'],
+    ['📶 网络链路分析', '请获取当前的 WebRTC 传输质量指标(get_webrtc_stats)，分析 FPS、延迟(RTT/JitterBuffer)状况并给出一份中文分析。'],
+    ['🔍 分析异常崩溃', '检索最近 100 行 logcat 错误日志，查找是否有进程崩溃或 Exception 报错并总结根源。'],
+    ['🧹 清理系统空间', '检查设备的磁盘存储空间。如果有可以清理的临时垃圾或缓存目录，请执行清理，并对比清理前后的空间容量变化。'],
+    ['🔧 诊断连接与网络', '请协助诊断连接失败、画面黑屏或无连接问题。请直接读取设备端 /data/local/tmp/cloudphone-agent.log 日志的最后 200 行，重点检查 NAT 外部映射配置、ICE 候选 IP、UDS 三通道与 CoreService/关键帧状态，并用中文给出诊断报告与修复建议。']
+  ];
+  var msgs = document.getElementById('ai-msgs');
+  var input = document.getElementById('ai-input');
+  var sendBtn = document.getElementById('ai-send');
+  var trace = document.getElementById('ai-trace');
+  var loading = false;
+
+  function addMsg(role, text) {
+    var div = document.createElement('div');
+    div.className = 'ai-msg ' + role;
+    div.textContent = text;
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  function setTrace(text) { trace.textContent = text; }
+
+  // 技能条
+  var skillsBar = document.getElementById('ai-skills');
+  SKILLS.forEach(function (s) {
+    var b = document.createElement('button');
+    b.className = 'ai-skill';
+    b.textContent = s[0];
+    b.addEventListener('click', function () { sendText(s[1]); });
+    skillsBar.appendChild(b);
+  });
+
+  function renderMessage(m) {
+    if (m.role === 'user') {
+      addMsg('user', m.content || '');
+      return;
+    }
+    if (m.role === 'assistant') {
+      var out = m.content || '';
+      if (m.tool_calls && m.tool_calls.length > 0) {
+        var names = m.tool_calls.map(function (t) { return '🔧 ' + t.function.name; }).join('  ');
+        addMsg('tool', names);
+      }
+      if (out) {
+        addMsg('assistant', out);
+      }
+      return;
+    }
+    if (m.role === 'tool') {
+      addMsg('tool', '[' + (m.name || 'tool') + '] ' + String(m.content || '').substring(0, 120));
+    }
+  }
+
+  function sendText(text) {
+    var t = (text || '').trim();
+    if (!t) { return; }
+    if (native('getViewOnly', '0') === '1') { setTrace('只读模式不可用 AI'); return; }
+    if (loading) { return; }
+    loading = true;
+    sendBtn.textContent = '…';
+    input.value = '';
+    var p = window.__aiApi.runLoop(t);
+    p.then(function (res) {
+      if (res && res.final) { addMsg('assistant', res.final); }
+    }).catch(function (e) {
+      addMsg('err', '❌ ' + (e && e.message ? e.message : '请求失败'));
+      setTrace('错误: ' + (e && e.message ? e.message : ''));
+    }).then(function () {
+      loading = false;
+      sendBtn.textContent = '发送';
+    });
+  }
+
+  // 事件订阅（引擎出口）
+  window.__aiEvents.onMessage = function (m) { renderMessage(m); };
+  window.__aiEvents.onLog = function (level, text) { setTrace('[' + level + '] ' + text); };
+
+  document.getElementById('ai-send').addEventListener('click', function () { sendText(input.value); });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { sendText(input.value); }
+  });
+  document.getElementById('ai-new').addEventListener('click', function () {
+    window.__aiApi.reset();
+    msgs.innerHTML = '';
+    setTrace('已开启新会话');
+  });
+  document.getElementById('ai-close').addEventListener('click', function () {
+    document.getElementById('ai-panel').style.display = 'none';
+  });
+
+  // 面板开合出口（ArkWebView FAB 经 runJavaScript 调用）
+  window.__aiPanel = {
+    open: function () { document.getElementById('ai-panel').style.display = 'flex'; input.focus(); },
+    close: function () { document.getElementById('ai-panel').style.display = 'none'; }
+  };
+})();
+</script>
+
+<!-- boot：Demo 走仿真屏（P2-12d，跳过信令）；正常态建立信令连接 -->
+<script>
+if (native('getDemoMode', '0') === '1') {
+  document.getElementById('video').style.display = 'none';
+  document.getElementById('hint').style.display = 'none';
+  var mockCanvas = document.getElementById('mock-screen');
+  mockCanvas.style.display = 'block';
+  mockCanvas.width = 360;
+  mockCanvas.height = 640;
+  document.getElementById('status').textContent = 'Demo 模式（仿真画面，无注入）';
+  startMockScreen('mock-screen', native('getDeviceId', 'Demo'));
+} else {
+  start();
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+{
+  // ============================================================================
+  // DevEco Studio Code Linter 配置（本工程 ArkTS 代码质量门禁）
+  // 运行：pwsh scripts/lint.ps1（仓库根）；GUI：DevEco → Code → Code Linter（自动读取本文件）
+  // 规则文档（本机，比官网好用）：D:\Apps\DevEco Studio\plugins\codelinter\eslintAgent\docs\<规则集>\
+  // 级别："error"|"warn"|"suggestion"|"off"；行内屏蔽 /* eslint-disable-next-line 规则Id */
+  // ⚠️ 未知规则集会触发 "Some error occurred during linting"（报告不完整）；
+  //    未知规则 ID 被静默忽略（配错=假门禁）——改完必须跑一次并确认无该错误行。
+  //    arkts-* 系列（115 条语言级硬约束）不在此处，由编译期 ArkTS Linter 强制
+  //    （即门 2：hvigorw assembleHap）。
+  // ============================================================================
+  "files": [
+    "**/*.ets",
+    "**/*.json5"
+  ],
+  "ignore": [
+    "**/src/ohosTest/**/*",
+    "**/src/test/**/*",
+    "**/src/mock/**/*",
+    "**/node_modules/**/*",
+    "**/oh_modules/**/*",
+    "**/build/**/*",
+    "**/.preview/**/*",
+    "**/hvigorfile.ts",
+    "**/hvigorfile.js",
+    "**/BuildProfile.ets",
+    "**/oh-package-lock.json5"
+  ],
+  "ruleSet": [
+    "plugin:@typescript-eslint/recommended",   // 通用 TS/ArkTS 质量（官方默认）
+    "plugin:@performance/recommended",         // 性能（官方默认）
+    "plugin:@security/recommended",            // 安全
+    "plugin:@hw-stylistic/recommended",        // 华为 ArkTS 风格
+    "plugin:@previewer/recommended",           // 预览器约束
+    "plugin:@correctness/recommended",         // 正确性专项（本安装有插件与文档）
+    "plugin:@compatibility/recommended"        // API 兼容性（同上）
+    // 已排除：@stability / @private —— 本机安装无对应插件，启用即报 "Some error occurred during linting"
+    // 可选：@cross-device-app-dev/recommended（一次开发多端，本项目暂不需要）
+  ],
+  "rules": {
+    // ---- 安全（对齐 DevEco 官方模板）----
+    "@security/no-unsafe-aes": "error",
+    "@security/no-unsafe-hash": "error",
+    "@security/no-unsafe-mac": "warn",
+    "@security/no-unsafe-dh": "error",
+    "@security/no-unsafe-dsa": "error",
+    "@security/no-unsafe-ecdsa": "error",
+    "@security/no-unsafe-rsa-encrypt": "error",
+    "@security/no-unsafe-rsa-sign": "error",
+    "@security/no-unsafe-rsa-key": "error",
+    "@security/no-unsafe-dsa-key": "error",
+    "@security/no-unsafe-dh-key": "error",
+    "@security/no-unsafe-3des": "error",
+    // ---- 类型安全（对应官方《ArkTS编程规范》禁 any）----
+    "@typescript-eslint/no-explicit-any": "error",
+    "@typescript-eslint/no-non-null-assertion": "warn",
+    "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "@typescript-eslint/no-empty-function": "warn",
+    "@typescript-eslint/ban-ts-comment": "error",
+    // ---- 命名与风格（对齐《ArkTS编程规范》）----
+    // ⚠️ 本安装的 @hw-stylistic/* 规则不接受选项数组（["warn",...] 或 ["warn",{...}] 均触发
+    //    "Some error occurred during linting"，已实测定位于此），只能给纯级别字符串；
+    //    行宽/引号风格按插件内置默认（单引号等）执行。
+    "@hw-stylistic/quotes": "warn",
+    "@hw-stylistic/semi": "warn",
+    "@hw-stylistic/max-len": "warn",
+    "@hw-stylistic/no-tabs": "error",
+    "@hw-stylistic/file-naming-convention": "warn",
+    // ---- 启动性能（module.json5 启动窗口图标）----
+    "@performance/start-window-icon-check": "warn"
+  },
+  "overrides": [
+    {
+      "files": ["**/oh_modules/**/*", "**/src/test/**/*", "**/src/ohosTest/**/*", "**/src/mock/**/*"],
+      "rules": { "@typescript-eslint/no-explicit-any": "off", "@hw-stylistic/max-len": "off" }
+    }
+  ]
+}

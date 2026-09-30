@@ -1,0 +1,20 @@
+#!/bin/sh
+# pre-commit: ArkTS Code Linter 门禁（仅 error 级阻断）
+# 安装：pwsh scripts/install-hooks.ps1
+# 临时跳过：git commit --no-verify
+# 触发条件：暂存区含 .ets/.json5/.ts 变更时才跑（否则秒过）
+changed=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ets|json5|ts)$')
+if [ -z "$changed" ]; then
+  exit 0
+fi
+
+# 仓库根 = 本钩子目录（<root>/scripts/git-hooks）上溯两层
+REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+LINT_SCRIPT="$REPO_ROOT/scripts/lint.ps1"
+
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoProfile -File "$LINT_SCRIPT" -ExitOn error
+else
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$LINT_SCRIPT" -ExitOn error
+fi
+exit $?
